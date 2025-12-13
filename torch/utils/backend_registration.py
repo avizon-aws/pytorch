@@ -1,5 +1,6 @@
 # mypy: allow-untyped-defs
 
+from typing import Dict, Callable, Any
 import torch
 from torch._C import _get_privateuse1_backend_name, _rename_privateuse1_backend
 from torch.overrides import handle_torch_function, has_torch_function_unary
@@ -8,6 +9,9 @@ from torch.overrides import handle_torch_function, has_torch_function_unary
 __all__ = [
     "rename_privateuse1_backend",
     "generate_methods_for_privateuse1_backend",
+    "has_mx_capability",
+    "register_backend_fn"
+
 ]
 
 # TODO: Should use `torch._C._get_privateuse1_backend_name()` to get
@@ -519,3 +523,23 @@ def _setup_privateuseone_for_python_backend(
     torch._register_device_module(rename, backend_module)
     torch._C._acc.register_python_privateuseone_hook(hook)
     torch._C._acc.register_python_privateuseone_device_guard(device_guard)
+
+_BACKEND_FN_REGISTRY: Dict[str, Dict[str, Callable]] = {}
+
+def register_backend_fn(device_type: str, fn_name: str):
+    def decorator(fn):
+        if device_type not in _BACKEND_FN_REGISTRY:
+            _BACKEND_FN_REGISTRY[device_type] = {}
+        _BACKEND_FN_REGISTRY[device_type][fn_name] = fn
+        return fn
+    return decorator
+
+def _dispatch_backend_fn(fn_name: str, device: str, *args, **kwargs):
+    import torch
+    device_type = torch.device(device).type
+    if device_type in _BACKEND_FN_REGISTRY and fn_name in _BACKEND_FN_REGISTRY[device_type]:
+        return _BACKEND_FN_REGISTRY[device_type][fn_name](device, *args, **kwargs)
+    raise NotImplementedError(f"{fn_name} not implemented for {device_type}")
+
+def has_mx_capability(device: str) -> bool:
+    return _dispatch_backend_fn("has_mx_capability", device)
